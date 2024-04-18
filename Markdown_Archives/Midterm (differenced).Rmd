@@ -1,0 +1,410 @@
+---
+title: "Midterm"
+author: "Connor Bailey"
+date: "11/5/23"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    theme: cerulean
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+projPath <- dirname(rstudioapi::documentPath())
+setwd(projPath)
+```
+```{r libraries, include=FALSE}
+
+library(fpp3)
+library(plotly)
+library(car)
+library(forecast)
+library(ggthemes)
+library(tibbletime)
+theme_set(theme_solarized())
+```
+
+# Import  Data
+```{block data, type = 'written_answer'}
+
+I chose CO2 emissions from the transportation sector in the US, from 1973 to 2023. I obtained this data from the US Energy Information Administration. We will be examining 1973-2012 and observing how our forecasting models compare with the effects of the 2008 recession. The recession negatively impact many sectors of the economy, including transportation. Therefore, a drop-off in CO2 emissions in 2008 is expected. We will import the data, filter and organzie it, and convert it into a time-series.
+
+```
+```{r}
+
+# Importing data 
+df.gas <- read.csv("Data/natural_gas.csv")
+df.price <- read.csv("Data/natgas_price.csv")
+df.temp <- read.csv("Data/temp_monthly.csv")
+df.RD <- read.csv("Data/GERD%ofGDP.csv")
+df.IND <- read.csv("Data/IndustrialProduction.csv")
+
+# Cleaning and organizing consumption data frame
+df.gas <- df.gas |> 
+  filter(Description == "Natural Gas Consumption",
+         substr(YYYYMM, 5, 6) != 13,
+         between(substr(YYYYMM, 1, 4), "2016", "2021")) |>
+  mutate(Year = substr(YYYYMM, 1, 4),
+         Month = substr(YYYYMM, 5, 6),
+         YearMonth = yearmonth(paste(Year, Month)),
+         Consumption = as.numeric(Value)) |>
+  select(YearMonth, Consumption) 
+
+# Cleaning and organizing price data frame
+df.price <- df.price |>
+  mutate(YearMonth = yearmonth(Date)) |>
+  filter(between(substr(Date, 5, 8), "2016", "2021")) |>
+  select(YearMonth, Price)
+
+# Cleaning and organizing temp data frame
+df.temp <- df.temp |>
+  filter(between(substr(DATE, 1, 4), "2016", "2021")) |>
+  mutate(YearMonth = yearmonth(DATE)) |>
+  group_by(YearMonth) |> 
+  aggregate(TAVG ~ YearMonth, mean) |>
+  mutate(Temp = TAVG)
+
+# Cleaning and organizing R&D spending data frame
+df.RD <- df.RD |> 
+  mutate(Year = substr(TIME, 1, 4),
+         Month = substr(TIME, 5, 6),
+         YearMonth = yearmonth(paste(Year, Month)),
+         Tech = Value) |>
+  select(c(YearMonth, Tech)) |>
+  arrange(YearMonth)
+  
+# Cleaning and organizing industrial production index data frame
+df.IND <- df.IND |>
+  filter(between(substr(TIME, 1, 4), "2016", "2021")) |>
+  mutate(YearMonth = yearmonth(TIME),
+         Industry = Value) |>
+  select(c(YearMonth, Industry)) |>
+  arrange(YearMonth)
+
+# Combining into one data frame
+df <- cbind(df.gas, df.price, df.temp, df.RD, df.IND) |>
+  select(-c(3,5,6,8,10))
+
+# Generating a time-series
+myts <- df |>
+  as_tsibble(index = YearMonth, 
+             key = c(Consumption, Price, Temp, Tech, Industry)) |>
+  arrange(YearMonth)
+
+```
+
+# Time-Series Plot
+```{block plot1, type = 'written_answer'}
+Now that we have our time-series the first step is to visualize the series for the variable in question: monthly consumption of natural gas in the US. 
+```
+```{r}
+
+# Plotting the time-series
+ggplot(myts, aes(x = YearMonth, y = Consumption)) + 
+  geom_point(aes(y = Consumption)) + 
+  geom_line(aes(y = Consumption)) +
+  labs(title = "Time-Series of Natural Gas Consumption",
+       subtitle = "in USA (2016-2021)",
+       x = "Month",
+       y = "Billion Cubic Feet") 
+
+
+```
+
+# Box-Cox Transformation 
+```{block box-cox, type = 'written_answer'}
+In the time-series plot we could see that the seasonality was not uniform. To improve this, we will implement the Box-Cox transformation. Specifically we will utilize the guerrero method to determine the optimal lambda value, and then use that lambda value to transform the data accordingly.  
+```
+```{r}
+
+lambda <- BoxCox.lambda(myts$Consumption, method = c("guerrero"))
+
+myts$Consumption <- myts$Consumption^lambda
+myts <- as_tsibble(myts, index = YearMonth)
+
+```
+
+
+# Train & Test Sets
+```{block train_test, type = 'written_answer'}
+In order to assess the accuracy of our  models, we will need to split our data in to 'train' and 'test' data sets. The first four years of the data (80%), 2016-2020, will be put in the train set, and the final year (20%), 2021, will be put in the test data set. 
+```
+```{r}
+
+# Train
+train <- as_tsibble(myts[1:60,], 
+                    index = YearMonth, 
+                    key = c(Consumption, Price, Temp, Tech, Industry))
+train$Consumption <- train$Consumption*1
+train <- as_tsibble(train, index = YearMonth)
+
+test <- as_tsibble(myts[61:72,], 
+                   index = YearMonth, 
+                   key = c(Consumption, Price, Temp, Tech, Industry))
+test$Consumption <- test$Consumption*1
+test <- as_tsibble(test, index = YearMonth)
+
+```
+
+
+
+
+
+# Regression Model
+## Differencing
+```{block differencing, type = 'written_answer'}
+Even though we now have constant variance, we will further improve our model performance by differencing our time series so it is stationary.
+```
+```{r}
+
+myts.dif <- myts |> 
+  mutate(Consumption = difference(Consumption)) |>
+  as_tsibble(index = YearMonth, 
+             key = c(Consumption, Price, Temp, Tech, Industry)) |>
+  arrange(YearMonth) 
+
+ggplot(myts.dif, aes(x = YearMonth, y = Consumption)) + 
+  geom_point(aes(y = Consumption)) + 
+  geom_line(aes(y = Consumption)) +
+  labs(title = "Time-Series of Natural Gas Consumption",
+       subtitle = "in USA (2016-2021)",
+       x = "Month",
+       y = "Change in Consumption")
+
+```
+
+## Differenced Train & Test Sets
+```{block train_test.dif, type = 'written_answer'}
+We will now recreate train and test data sets with the differenced time series
+```
+```{r}
+
+# Train
+train.dif <- as_tsibble(myts.dif[1:60,], 
+                    index = YearMonth, 
+                    key = c(Consumption, Price, Temp, Tech, Industry))
+train.dif$Consumption <- train.dif$Consumption*1
+train.dif <- as_tsibble(train.dif, index = YearMonth)
+
+# Test
+test.dif <- as_tsibble(myts.dif[61:72,], 
+                   index = YearMonth, 
+                   key = c(Consumption, Price, Temp, Tech, Industry))
+test.dif$Consumption <- test.dif$Consumption*1
+test.dif <- as_tsibble(test.dif, index = YearMonth)
+
+```
+
+## Regression Model Generation
+```{block lm.model1, type = 'written_answer'}
+Now we use the differenced train set to generated our linear regression model. The previously discussed independent variables of price, average national temperature, technical index, industrial production index, and a general seasonal component will be implemented in the linear regression model. 
+```
+```{r}
+
+fit.lm <- train.dif |> model(
+  LM = TSLM(Consumption ~ Price + Temp + Tech + Industry + season()))
+
+```
+```{block lm.model2, type = 'written_answer'}
+Below we see the report for the linear regression model. .... 
+```
+```{r}
+
+report(fit.lm)
+
+```
+
+## Residual Analysis
+```{block lm.resid1, type = 'written_answer'}
+Before we can forecast, we need to analyze the residuals of our model. 
+```
+```{r}
+
+fit.lm |> gg_tsresiduals()
+
+# Portmanteau Test (Ljung-Box Test)
+augment(fit.lm) |>
+  features(.resid, ljung_box, lag = 24)
+
+```
+```{block lm.resid2, type = 'written_answer'}
+Considering the residual plots first, we see that the residuals of three of the four models have uniform variance around zero. The residuals of the seasonal naive model are weighted on the positive side and grow in magnitude with time. For all four models, there are no large outliers and the majority of the residuals are between one and negative one. 
+
+If we consider the ACF plots, we see apparent autocorrelation in the naive and drift models, and slight autocorrelation in the seasonal naive model. The ETS model, however, appears uncorrelated, with a mean of zero, and constant variance. This is a positive sign for this particular forecasting model. 
+```
+
+
+
+
+# ETS Model
+## Train & Test Sets
+```{block train.test.ETS , type = 'written_answer'}
+ETS models cannot handle negative values. Therefore, we will use the original train and test data sets, which are not stationary. 
+```
+## ETS Model Generation
+```{r}
+
+fit.ETS <- train |> model(
+  ETS = ETS(Consumption))
+
+```
+```{block ETS.model1, type = 'written_answer'}
+Below we see the report for the ETS model. .... 
+```
+```{r}
+
+report(fit.ETS)
+
+```
+
+## Residual Analysis
+```{block ETS.resid1, type = 'written_answer'}
+Before we can forecast, we need to analyze the residuals of our model. 
+```
+```{r}
+
+fit.ETS |> gg_tsresiduals()
+
+# Portmanteau Test (Ljung-Box Test)
+augment(fit.ETS) |>
+  features(.resid, ljung_box, lag = 24)
+
+```
+```{block lm.resid2, type = 'written_answer'}
+Considering the residual plots first, we see that the residuals of three of the four models have uniform variance around zero. The residuals of the seasonal naive model are weighted on the positive side and grow in magnitude with time. For all four models, there are no large outliers and the majority of the residuals are between one and negative one. 
+
+If we consider the ACF plots, we see apparent autocorrelation in the naive and drift models, and slight autocorrelation in the seasonal naive model. The ETS model, however, appears uncorrelated, with a mean of zero, and constant variance. This is a positive sign for this particular forecasting model. 
+```
+
+
+
+
+
+
+# ARIMA Model
+## Train & Test Sets
+```{block train.test.ARIMA , type = 'written_answer'}
+The ARIMA function requires stationary time series. However, the ARIMA() function automatically takes the necessary differences in the time-series. Therefore, we will use the original train and test data sets.
+```
+## ARIMA Model Generation
+```{r}
+
+fit.ARIMA <- train |> model(
+  ARIMA = ARIMA(Consumption))
+
+```
+```{block ARIMA.model1, type = 'written_answer'}
+Below we see the report for the ARIMA model. .... 
+```
+```{r}
+
+report(fit.ARIMA)
+
+```
+
+## Residual Analysis
+```{block ARIMA.resid1, type = 'written_answer'}
+Before we can forecast, we need to analyze the residuals of our model. 
+```
+```{r}
+
+fit.ARIMA |> gg_tsresiduals()
+
+# Portmanteau Test (Ljung-Box Test)
+augment(fit.ARIMA) |>
+  features(.resid, ljung_box, lag = 24)
+
+```
+```{block ARIMA.resid2, type = 'written_answer'}
+
+```
+
+
+
+
+
+
+
+```{block resid2, type = 'written_answer'}
+Considering the residual plots first, we see that the residuals of three of the four models have uniform variance around zero. The residuals of the seasonal naive model are weighted on the positive side and grow in magnitude with time. For all four models, there are no large outliers and the majority of the residuals are between one and negative one. 
+
+If we consider the ACF plots, we see apparent autocorrelation in the naive and drift models, and slight autocorrelation in the seasonal naive model. The ETS model, however, appears uncorrelated, with a mean of zero, and constant variance. This is a positive sign for this particular forecasting model. 
+```
+
+# Forecast
+```{r}
+
+# Plotting all models seperatly
+fit.lm |> forecast(new_data = test.dif) |> 
+  autoplot(train.dif) +
+  autolayer(test.dif) +
+  labs(title = "Regression Model Forecast",
+       x = "Month",
+       y = "Transformed Natural Gas Consumption") 
+fit.ETS |> forecast(h = 12) |> autoplot(train) +
+  autolayer(test) +
+  labs(title = "ETS Model Forecast",
+       x = "Month",
+       y = "Transformed Natural Gas Consumption") 
+fit.ARIMA |> forecast(h = 12) |> autoplot(train) +
+  autolayer(test) +
+  labs(title = "ARIMA Model Forecast",
+       x = "Month",
+       y = "Transformed Natural Gas Consumption") 
+
+
+```
+```{block forecast, type = 'written_answer'}
+The data we have chosen to analyze and forecast with is particularly challenging because the 2008 recession was unforseen, at least within this data set. The optimized ETS model performs the best among the three generated. The point forecast is higher than the actual emissions data, as expected. However, the actual values do lie within the prediction intervals. This is not the case for either our second or third ETS models. The second model has no trend component and is not terrible, as the data trend before the recession was upward. However, because the error component is additive, the prediction intervals are tight and do not contain the actual values. Lastly, the third model, which has no seasonal component and multiplicative trend and error, is way off. As previously said, the data trend was upward, so the forecast increases. However, the wide prediction intervals do not contain the actual values even with multiplicative error. 
+```
+
+# Accuracy
+```{block accuracy1, type = 'written_answer'}
+To assess the accuracy of our forecast models more specifically, we need to compare the generated forecasts against the test data with the following metrics:
+```
+### Point Forecast Accuracy
+``` {r}
+
+# Generating the forecast table (fable)
+myf.lm <- fit.lm |> forecast(new_data = test.dif)
+myf.ETS <- fit.ETS |> forecast(h = 12)
+myf.ARIMA <- fit.ARIMA |> forecast(h = 12)
+myf <- rbind(myf.lm, myf.ETS, myf.ARIMA)
+
+# Generating a point forecast accuracy table (without LM)
+acc.table <- accuracy(myf, test) |>
+  filter(.model != 'LM') 
+
+# Generating a point forecast accuracy table (only LM)
+acc.table.lm <- accuracy(myf.lm, test.dif) 
+
+# Combining into one table
+acc.table <- rbind(acc.table, acc.table.lm) |>
+  mutate(Model = .model) |>
+  select(-c(.type, MASE, RMSSE)) |>
+  arrange(RMSE)
+acc.table
+
+```
+```{block accuracy2, type = 'written_answer'}
+Oddly enough, the forecast generated with the ETS2 model (no trend) outperformed the other two, in terms of point forecast accuracy. If we consider the mean absolute percentage error (MAPE), our ETS2 forecast is only ~12% different than the actual values from the test set, and the ETS1 was ~14% different. These are not a great figures, but as we mentioned, this dataset is uniquely challenging to forecast, given the recession. 
+```
+### Prediction Interval Accuracy
+```{block accuracy3, type = 'written_answer'}
+Next, we need to analyze the accuracy of the prediction intervals of our forecast models. To do this we will examine the continuous ranked probability score (CRPS):
+```
+``` {r}
+
+myf |> accuracy(test, list(crps =CRPS)) |>
+  mutate(Model = .model,
+         CRPS = crps) |>
+  select(c(Model, CRPS)) |>
+  arrange(CRPS)
+
+```
+```{block accuracy4, type = 'written_answer'}
+Again the ETS2 model outperformed the other two. This is initially surprising. However, given that the trend of the data prior to the 2008 recession was upward, it makes intuitive sense that the model lacking any trend component would outperform the others. 
+```

@@ -1,0 +1,451 @@
+---
+title: "Natural Gas Consumption in the US"
+author: "Connor Bailey"
+date: "11/5/23"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    theme: cerulean
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+projPath <- dirname(rstudioapi::documentPath())
+setwd(projPath)
+options(scipen = 999) 
+```
+```{r libraries, include=FALSE}
+
+library(fpp3)
+library(plotly)
+library(car)
+library(forecast)
+library(ggthemes)
+library(tibbletime)
+library(distributional)
+theme_set(theme_solarized())
+```
+
+# Data Importation
+```{block data, type = 'written_answer'}
+
+I chose natural gas consumption in the US, from 2012 to 2021, which I obtained from the US Energy Information Administration. We will be examining 1973-2012 and observing how our forecasting models compare with the effects of the 2008 recession. The recession negatively impact many sectors of the economy, including transportation. Therefore, a drop-off in CO2 emissions in 2008 is expected. We will import the data, filter and organize it, and convert it into a time-series.
+
+```
+```{r}
+
+# Importing data 
+df.gas <- read.csv("Data/natural_gas.csv")
+df.henryhub <- read.csv("Data/natgas_price.csv")
+df.exports <- read.csv("Data/gas_exports.csv")
+df.temp <- read.csv("Data/newtemp_monthly.csv")
+df.RD <- read.csv("Data/GERDnewmonthly.csv")
+df.IND <- read.csv("Data/Industrial_Production(new).csv")
+
+```
+##### Generating: Consumption History Time-Series
+```{r}
+
+myts.gas <- df.gas |>
+  filter(Description == "Natural Gas Consumption",
+         substr(YYYYMM, 5, 6) != 13,) |>
+  mutate(Year = substr(YYYYMM, 1, 4),
+         Month = substr(YYYYMM, 5, 6),
+         YearMonth = yearmonth(paste(Year, Month)),
+         Consumption = as.numeric(Value)) |>
+  as_tsibble(index = YearMonth,
+             key = Consumption) |>
+  select(YearMonth, Consumption)
+myts.gas$Consumption <- myts.gas$Consumption^1
+myts.gas <- as_tsibble(myts.gas, index = YearMonth)
+
+```
+##### Generating: Contemporary Consumption Data Frame
+```{r}
+
+df.gas <- df.gas |> 
+  filter(Description == "Natural Gas Consumption",
+         substr(YYYYMM, 5, 6) != 13,
+         between(substr(YYYYMM, 1, 4), "2012", "2021")) |>
+  mutate(Year = substr(YYYYMM, 1, 4),
+         Month = substr(YYYYMM, 5, 6),
+         YearMonth = yearmonth(paste(Year, Month)),
+         Consumption = as.numeric(Value)) |>
+  select(YearMonth, Consumption) 
+
+```
+##### Generating: Price Data Frame
+```{r}
+
+df.price <- df.henryhub |>
+  mutate(YearMonth = yearmonth(Date)) |>
+  filter(between(substr(Date, 5, 8), "2012", "2021")) |>
+  select(YearMonth, Price)
+
+```
+##### Generating: US Exports Data Frame
+```{r}
+
+df.exports.22 <- df.exports |>
+  mutate(YearMonth = yearmonth(Date),
+         Exports = U.S..Natural.Gas.Exports..MMcf.) |>
+  filter(between(substr(Date, 5, 8), "1997", "2022"))
+df.exports <- df.exports.22 |>
+  filter(between(substr(Date, 5, 8), "2012", "2021"))  |>
+  select(YearMonth, Exports)
+
+```
+##### Generating: US Temperature Data Frame
+```{r}
+
+df.temp <- df.temp |>
+  filter(between(substr(DATE, 1, 4), "2012", "2021")) |>
+  mutate(YearMonth = yearmonth(DATE)) |>
+  group_by(YearMonth) |> 
+  aggregate(TAVG ~ YearMonth, mean) |>
+  mutate(Temp = TAVG)
+
+```
+##### Generating: R&D Spending (% of GDP) Data Frame
+```{r}
+
+df.RD <- df.RD |> 
+  filter(between(substr(TIME, 1, 4), "2012", "2021")) |>
+  mutate(Year = substr(TIME, 1, 4),
+         Month = substr(TIME, 5, 6),
+         YearMonth = yearmonth(paste(Year, Month)),
+         Tech = Value) |>
+  select(c(YearMonth, Tech)) |>
+  arrange(YearMonth)
+
+```
+##### Generating: Industry Data Frame
+```{r}
+
+df.IND <- df.IND |>
+  filter(between(substr(TIME, 1, 4), "2012", "2021")) |>
+  mutate(YearMonth = yearmonth(TIME),
+         Industry = Value) |>
+  select(c(YearMonth, Industry)) |>
+  arrange(YearMonth)
+
+```
+##### Generating: Combined Data Frame
+```{r}
+
+df <- cbind(df.gas, df.price, df.exports, df.temp, df.RD, df.IND) |>
+  select(-c(3,5,7,8,10,12))
+  
+```
+##### Generating: Final Time-Series
+```{r}
+
+myts <- df |>
+  as_tsibble(index = YearMonth, 
+             key = c(Consumption, Price, Exports, Temp, Tech, Industry)) |>
+  arrange(YearMonth)
+
+```
+
+# Time-Series Plots
+```{block plot1, type = 'written_answer'}
+Now that we have our time-series the first step is to visualize the series for the variable in question: monthly consumption of natural gas in the US. 
+```
+
+### Consumption History
+```{block plot2, type = 'written_answer'}
+In an attempt to understanding the greater trend of domestic US consumption of natural gas, we will begin by plotting a complete time-series of the data first This spans from 1973 to 2022. We will seasonally-adjust the time-series as well, to better identify the trend of the data. 
+```
+```{r}
+
+# Adding seasonally adjusted values
+myts.gas.decomp <- myts.gas |>
+  model(STL(Consumption)) |>
+  components()
+myts.gas["Adjusted"] <- myts.gas.decomp$season_adjust 
+  
+# Plotting the seasonally adjusted consumption time-series (1973 - Present)
+ggplot(myts.gas, aes(x = YearMonth, y = Adjusted)) +  
+  geom_line(aes(y = Adjusted)) +
+  labs(title = "Natural Gas Consumption - Seasonaly Adjusted",
+       subtitle = "in USA (1973 - July, 2023)",
+       x = "Month",
+       y = "Billion Cubic Feet") 
+
+# Exporting the plot
+ggsave(filename = "Graphics/TS_history.pdf", width = 12)
+
+```
+
+### Contemporary Consumption
+```{block plot3, type = 'written_answer'}
+Now we will plot the time-series that we will analyze: 2012 - 2022. 
+```
+```{r}
+
+# Plotting the consumption time-series (2012 - 2021)
+ggplot(myts, aes(x = YearMonth, y = Consumption)) + 
+  geom_point(aes(y = Consumption)) + 
+  geom_line(aes(y = Consumption)) +
+  labs(title = "Time-Series of Natural Gas Consumption",
+       subtitle = "in USA (2012-2021)",
+       x = "Month",
+       y = "Billion Cubic Feet") 
+
+# Exporting the plot
+ggsave(filename = "Graphics/TS_contemp.pdf", width = 12)
+
+```
+
+### US Natural Gas Exports
+```{block plot4, type = 'written_answer'}
+Now we will visualize the complete time series of the US natural gas exports market. This plot will contain quantity of exports and price history, based on the widely used Henry Hub index.  
+```
+```{r}
+
+# Generating a data frame, combining price and export data
+df.market <- df.henryhub |>
+  mutate(YearMonth = yearmonth(Date)) |>
+  filter(between(substr(Date, 5, 8), "1997", "2022")) |>
+  select(YearMonth, Price)
+df.market <- cbind(df.market, df.exports.22)
+df.market <- df.market[, !duplicated(colnames(df.market))]
+
+# Converting that data frame into a time-series
+myts.market <- df.market |>
+  as_tsibble(index = YearMonth, key = c(Price, Exports)) |>
+  mutate(Exports = Exports/100000)
+
+# Plotting the price and exports time-series
+ggplot(myts.market, aes(x = YearMonth)) + 
+  geom_line(aes(y = Price), color = "Dark Green") +  
+  scale_y_continuous(sec.axis = sec_axis(~., 
+                                         name = "Exports (10 Billion Cubic Feet)")) +
+  geom_line(aes(y = Exports), color = "Purple") +
+  labs(title = "US Natural Gas - Export Market",
+       subtitle = "Time Series of Exports (Qty) and Henry Hub Price Index (1997-2022)",
+       x = "Month",
+       y = "Price ($ per Million Btu") + 
+  annotate(
+    "text", label = "Price", 
+    x = (yearmonth("2014-03")), y = 6.4, size = 5.5, colour = "Dark Green") +
+  annotate(
+    "text", label = "Exports", 
+    x = (yearmonth("2005-02")), y = 1.5, size = 5.5, colour = "Purple")
+
+# Exporting the plot
+ggsave(filename = "Graphics/Market.pdf", width = 12, height = 7)
+
+```
+
+# Model Preperation
+### Box-Cox Transformation 
+```{block box-cox, type = 'written_answer'}
+In the time-series plot we could see that the seasonality was not uniform. Therefore, the variance is not constant, in other words, our time series is heteroscedastic. To fix this, we will implement the Box-Cox transformation. Specifically we will utilize the guerrero method to determine the optimal lambda value, and then use that lambda value to transform the data accordingly. This change can be seen in the plot below, where the seasonality is uniform, and the units on the y-axis have changed.  
+```
+```{r}
+
+# Box-Cox
+lambda <- BoxCox.lambda(myts$Consumption, method = c("guerrero"))
+myts$Consumption <- myts$Consumption^lambda
+myts <- as_tsibble(myts, index = YearMonth)
+
+# Plotting the transformed time-series
+ggplot(myts, aes(x = YearMonth, y = Consumption)) + 
+  geom_point(aes(y = Consumption)) + 
+  geom_line(aes(y = Consumption)) +
+  labs(title = "Time-Series of Natural Gas Consumption (Transformed)",
+       subtitle = "in USA (2012-2021)",
+       x = "Month",
+       y = "Transformed Cubic Feet") 
+
+# Exporting the plot
+ggsave(filename = "Graphics/TS_transformed.pdf", width = 12, height = 7)
+
+```
+
+
+### Train & Test Sets
+```{block train_test, type = 'written_answer'}
+In order to assess the accuracy of our  models, we will need to split our data in to 'train' and 'test' data sets. The first four years of the data (80%), 2016-2020, will be put in the train set, and the final year (20%), 2021, will be put in the test data set. 
+```
+```{r}
+
+# Train
+train <- as_tsibble(myts[1:96,], 
+                    index = YearMonth, 
+                    key = c(Consumption, Price, Temp, Tech, Industry))
+train$Consumption <- train$Consumption*1
+train <- as_tsibble(train, index = YearMonth)
+
+# Test
+test <- as_tsibble(myts[97:120,], 
+                   index = YearMonth, 
+                   key = c(Consumption, Price, Temp, Tech, Industry))
+test$Consumption <- test$Consumption*1
+test <- as_tsibble(test, index = YearMonth)
+
+```
+
+
+
+
+
+# Model Generation
+```{block models1, type = 'written_answer'}
+Now we will create a few  forecasting models using the training data set. The first model will be a linear regression model, using the predictor variables previously discussed, and a seasonal component. The second model will be an optimized ETS. The third model will be an optimized ARIMA. The final model will be an aggregation of all three previous models. 
+```
+```{r}
+
+fit <- train |> model(
+  LM = TSLM(Consumption ~ Price + Temp + Tech + Industry + Exports + season()),
+  ETS = ETS(Consumption),
+  ARIMA = ARIMA(Consumption)) |>
+  mutate(ENSEMBLE = (LM + ETS + ARIMA)/3)
+fit
+
+```
+```{block models2, type = 'written_answer'}
+{discuss the models}
+```
+
+# Residual Analysis
+```{block resid1, type = 'written_answer'}
+Before we can forecast with these models, we need to analyze their residuals. 
+```
+```{r}
+
+# Residuals Plot
+augment(fit) |>
+  autoplot(.resid) +
+  labs(title = "Residuals for All Models",
+       y = "Residuals")
+
+# Exporting the plot
+ggsave(filename = "Graphics/Residuals.pdf", width = 12, height = 7)
+
+# ACF Plots
+augment(fit) |>
+  ACF(.resid) |>
+  autoplot() +
+  labs(title = "ACF for All Models",
+       y = "ACF")
+
+# Exporting the plot
+ggsave(filename = "Graphics/ACF.pdf", width = 12, height = 7)
+
+# Portmanteau Test (Ljung-Box Test)
+augment(fit) |>
+  features(.innov, ljung_box, lag = 24) 
+
+```
+```{block resid2, type = 'written_answer'}
+As we can see, the residuals are relatively normally distributed around the mean of zero, meaning they are homoscedastic. The ACF plots for the ETS and ARIMA models look good, with (everything staying between the blue lines? - define better). The ACF plot for the regression model is slightly concerning. Furthermore, while the ETS and ARIMA models pass the Ljung-Box test, the regression model does not. While normally, these two facts would disqualify this model, we will proceed with this model for the sake of this exercise. As we will see when we forecast with these models, it performs well despite these concerns. 
+```
+
+
+# Forecast
+### ETS Forecast
+```{r}
+
+# Generating forecast plot
+fit |> select(c(ETS)) |> forecast(h = 24) |> 
+  autoplot(train) +
+  autolayer(test) +
+  labs(title = "ETS Model Forecast",
+       x = "Month",
+       y = "Transformed Natural Gas Consumption")  
+
+# Exporting the plot
+ggsave(filename = "Graphics/ETS_fit.pdf", width = 12, height = 7)
+
+```
+### ARIMA Forecast
+```{r}
+
+# Generating forecast plot
+fit |> select(c(ARIMA)) |> forecast(h = 24) |> autoplot(train) +
+  autolayer(test) +
+  labs(title = "ARIMA Model Forecast",
+       x = "Month",
+       y = "Transformed Natural Gas Consumption") 
+
+# Exporting the plot
+ggsave(filename = "Graphics/ARIMA_fit.pdf", width = 12, height = 7)
+
+```
+### Regression Forecast
+```{r}
+
+# Generating forecast plot
+fit |> select(c(LM)) |> forecast(new_data = test) |> autoplot(train) +
+  autolayer(test) +
+  labs(title = "Regression Model Forecast",
+       x = "Month",
+       y = "Transformed Natural Gas Consumption") 
+
+# Exporting the plot
+ggsave(filename = "Graphics/LM_fit.pdf", width = 12, height = 7)
+
+```
+### Aggregate Forecast
+```{r}
+
+# Generating forecast plot
+fit |> select(c(ENSEMBLE)) |> forecast(new_data = test) |> autoplot(train) +
+  autolayer(test) +
+  labs(title = "Aggregate Model Forecast",
+       x = "Month",
+       y = "Transformed Natural Gas Consumption") 
+
+# Exporting the plot
+ggsave(filename = "Graphics/ENSEMBLE_fit.pdf", width = 12, height = 7)
+
+```
+```{block forecast, type = 'written_answer'}
+The data we have chosen to analyze and forecast with is particularly challenging because the 2008 recession was unforseen, at least within this data set. The optimized ETS model performs the best among the three generated. The point forecast is higher than the actual emissions data, as expected. However, the actual values do lie within the prediction intervals. This is not the case for either our second or third ETS models. The second model has no trend component and is not terrible, as the data trend before the recession was upward. However, because the error component is additive, the prediction intervals are tight and do not contain the actual values. Lastly, the third model, which has no seasonal component and multiplicative trend and error, is way off. As previously said, the data trend was upward, so the forecast increases. However, the wide prediction intervals do not contain the actual values even with multiplicative error. 
+```
+
+# Accuracy
+```{block accuracy1, type = 'written_answer'}
+To assess the accuracy of our forecast models more specifically, we need to compare the generated forecasts against the test data with the following metrics:
+```
+### Point Forecast Accuracy
+``` {r}
+
+# Generating the forecast table (fable)
+myf <- fit |> select(-c(LM, ENSEMBLE)) |> forecast(h = 12)
+myf.lm <- fit |> select(c(LM)) |> forecast(new_data = test)
+myf.agg <- fit |> select(c(ENSEMBLE)) |> forecast(new_data = test)
+myf <- rbind(myf, myf.lm, myf.agg)
+
+# Generating a point forecast accuracy table
+accuracy(myf, test) |>
+  mutate(Model = .model) |>
+  select(c(Model, MAE, RMSE, MAPE)) |>
+  arrange(MAPE)
+
+
+```
+```{block accuracy2, type = 'written_answer'}
+Oddly enough, the forecast generated with the ETS2 model (no trend) outperformed the other two, in terms of point forecast accuracy. If we consider the mean absolute percentage error (MAPE), our ETS2 forecast is only ~12% different than the actual values from the test set, and the ETS1 was ~14% different. These are not a great figures, but as we mentioned, this dataset is uniquely challenging to forecast, given the recession. 
+```
+### Prediction Interval Accuracy
+```{block accuracy3, type = 'written_answer'}
+Next, we need to analyze the accuracy of the prediction intervals of our forecast models. To do this we will examine the continuous ranked probability score (CRPS):
+```
+``` {r}
+
+myf |> accuracy(test, list(crps =CRPS)) |>
+  mutate(Model = .model,
+         CRPS = crps) |>
+  select(c(Model, CRPS)) |>
+  arrange(CRPS)
+
+```
+```{block accuracy4, type = 'written_answer'}
+Again the ETS2 model outperformed the other two. This is initially surprising. However, given that the trend of the data prior to the 2008 recession was upward, it makes intuitive sense that the model lacking any trend component would outperform the others.
+```

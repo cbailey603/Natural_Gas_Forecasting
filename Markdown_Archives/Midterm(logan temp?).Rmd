@@ -1,0 +1,218 @@
+---
+title: "Midterm"
+author: "Connor Bailey"
+date: "11/5/23"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    theme: cerulean
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+projPath <- dirname(rstudioapi::documentPath())
+setwd(projPath)
+```
+```{r libraries, include = FALSE}
+
+library(fpp3)
+library(plotly)
+library(car)
+library(ggthemes)
+theme_set(theme_solarized())
+```
+
+# Introduction
+```{block intro, type = 'written_answer'}
+In this report we will be analyzing electricity generated from solar power. We will create multiple forecasting models, assessing their performance, and choosing the optimal model. 
+```
+
+# Data Importation 
+```{block data, type = 'written_answer'}
+The chosen data set is monthly electricity levels generated from all possible resources in the United States, from 2001 to 2023, measured in thousand gigawatts. We will be examining monthly electricity generated from solar power in particular. The data comes from the US Energy Information Administration. Once the data is imported, by reading the csv file, it will be filtered down to the years of 2018 to 2022, and saved as a time-series ('tsibble'). 
+```
+```{r}
+
+# Importing monthly electricity generation in USA, by resource type. Data from EIA
+mydata <- read.csv("Data/daily_temp.csv")
+
+# peaking at data
+df.logan <- mydata |> 
+  filter(STATION == "USW00014739")
+
+
+# Generating a time-series of monthly solar electricity generation from 2018 to 2022
+ts.logan <- df.logan |>
+  mutate(DATE = as_date(DATE)) |>
+  select(DATE, TAVG) |>
+  as_tsibble(index = DATE, key = c(TAVG)) |>
+  arrange(DATE)
+```
+
+# Time-Series Plot
+```{block plot1, type = 'written_answer'}
+Now that we have our time-series the first step is to visualize the series.
+```
+```{r}
+
+# Plotting the time-series
+ggplot(ts.logan, aes(x = DATE)) + 
+  geom_line(aes(y = TAVG)) + 
+  geom_point(aes(y = TAVG)) + 
+  labs(title = "Time-Series of ___",
+       subtitle = "in Boston, Massachussetts (Oct, 2018 - Sept, 2023)",
+       x = "Day",
+       y = "___") 
+
+ts.logan <- ts(ts.logan, frequency = 12)
+plot(decompose(ts.logan))
+```
+```{block plot2, type = 'written_answer'}
+As we can see from the plotted time series, there is discernible seasonality to the data. This makes intuitive sense as solar panels need direct sunlight to create electricity, which there are higher levels of in the summer months. The magnitude of the seasonality of the data also increases along the time-series. Lastly, a clear upward trend is noticeable in the data. This indicates that as the technology becomes cheaper and more commonplace, more American citizens and firms are introducing solar panels to the electric grid.  
+```
+
+# Train & Test Sets
+```{block train_test, type = 'written_answer'}
+In order to assess the performance of our forecasting models, we will need to split our data in to 'train' and 'test' data sets. The first 80% of the data will be put in the train set, and the final 20% will be put in the test data set. 
+```
+```{r}
+
+train <- as_tsibble(ts.logan[1:1460,], index = DATE, key = c(TAVG))
+test <- as_tsibble(ts.logan[1461:1826,], index = DATE, key = c(TAVG))
+
+```
+
+# Box-Cox Transformation 
+```{block box-cox, type = 'written_answer'}
+As was discussed in the analysis of the time-series plot, the magnitude of seasonality in the data is increasing. Therefore, the data needs to be transformed, so the seasonal variation is more level. The Box-Cox transformation will determine the optimal lambda value and transform the training and testing sets accordingly. 
+```
+```{r}
+
+lambda <- forecast::BoxCox.lambda(train$TAVG, method = c("guerrero"))
+
+train$TAVG <- train$TAVG^lambda
+train <- as_tsibble(train, index = DATE)
+test$TAVG <- test$TAVG^lambda
+test <- as_tsibble(test, index = DATE)
+
+```
+
+# Model Generation
+```{block models1, type = 'written_answer'}
+We will be creating four forecasting models using the training data set. Then, we will assess each of their performances, and choosing the optimal model. The first model will be the naive model, which just forecasts the latest data point in the time-series. The second model is the drift model, which forecasts a line from the first point in the time-series to the last point. The seasonal naive model forecasts the latest season in the time-series, in our case this means the forecast will just be the previous twelve months of data in the time-series. The ETS model is an exponential smoothing model, which weighs recent data points in the time-series more heavily than older ones.
+```
+```{r}
+
+fit <- train |> model(Naive = NAIVE(TAVG),
+                      Drift = RW(TAVG ~ drift()),
+                      SNaive = SNAIVE(TAVG, frequency = 4),
+                      ETS = ETS(TAVG))
+
+```
+```{block ETS1, type = 'written_answer'}
+The ETS model automatically optimizes its parameters based on the given time-series, but let's take examine those parameters regardless:
+```
+```{r}
+
+fit |> select(c(ETS)) |> report()
+
+```
+```{block ETS2, type = 'written_answer'}
+We can see from above, we have an ETS(M,A,M), this means we have a multiplicative error model. The gamma value indicates what we already discuss, which is that the magnitude of seasonality of the data is increasing in our time-series.   
+```
+
+# Residual Analysis
+```{block resid1, type = 'written_answer'}
+Before we can forecast, we need to analyze the residuals of our models. 
+```
+```{r}
+
+# Residuals Plot
+augment(fit) |>
+  autoplot(.resid) +
+  labs(title = "Residuals for All Models",
+       y = "Residuals")
+
+# ACF Plots
+augment(fit) |>
+  ACF(.resid) |>
+  autoplot() +
+  labs(title = "ACF for All Models",
+       y = "ACF")
+
+```
+```{block resid2, type = 'written_answer'}
+Considering the residual plots first, we see that the residuals of three of the four models have uniform variance around zero. The residuals of the seasonal naive model are weighted on the positive side and grow in magnitude with time. For all four models, there are no large outliers and the majority of the residuals are between one and negative one. 
+
+If we consider the ACF plots, we see apparent autocorrelation in the naive and drift models, and slight autocorrelation in the seasonal naive model. The ETS model, however, appears uncorrelated, with a mean of zero, and constant variance. This is a positive sign for this particular forecasting model. 
+```
+
+# Forecast
+```{block forecast1, type = 'written_answer'}
+We then use those generated models to forecast the monthly unemployment rate for the fifth year (same time period as our test data set)
+```
+```{r}
+
+# Plotting all models seperatly
+fit |> select(c(Naive)) |> forecast(h = 366) |> autoplot(train) +
+  labs(title = "Naive Model Forecast",
+       x = "Month",
+       y = "Transformed Gigawatts ('000)")
+fit |> select(c(Drift)) |> forecast(h = 366) |> autoplot(train) +
+  labs(title = "Drift Model Forecast",
+       x = "Month",
+       y = "Transformed Gigawatts ('000)")
+fit |> select(c(SNaive)) |> forecast(h = 366) |> autoplot(train) +
+  labs(title = "Seasonal Naive Model Forecast",
+       x = "Month",
+       y = "Transformed Gigawatts ('000)")
+fit |> select(c(ETS)) |> forecast(h = 366) |> autoplot(train) +
+  labs(title = "ETS Model Forecast",
+       x = "Month",
+       y = "Transformed Gigawatts ('000)")
+
+```
+
+
+# Accuracy
+```{block accuracy1, type = 'written_answer'}
+To assess the accuracy and overall performance of our forecast models, we need to compare the generated forecasts against the test data. First, we analyze the point forecast accuracy with the following metrics:
+```
+### Point Forecast Accuracy
+``` {r}
+
+myf <- fit |> forecast(h = 12)
+
+accuracy(myf, test) |>
+  mutate(Model = .model,
+         ACF = ACF1) |>
+  select(c(Model, MAE, RMSE, MAPE)) |>
+  arrange(MAE)
+
+```
+```{block accuracy2, type = 'written_answer'}
+As we can see from the table above, the forecast generated with the ETS model outperformed the other three, significantly. This could be intuited from comparing the visualization of the forecasts. In particular, if we consider the mean absolute percentage error (MAPE), our ETS forecast is only ~3% different than the actual values from the test set.  
+```
+### Prediction Interval Accuracy
+```{block accuracy3, type = 'written_answer'}
+Next, we need to analyze the accuracy of the prediction intervals of our forecast models. To do this we will examine the continuous ranked probability score (CRPS):
+```
+``` {r}
+
+myf |> accuracy(test, list(crps =CRPS)) |>
+  mutate(Model = .model,
+         CRPS = crps) |>
+  select(c(Model, CRPS)) |>
+  arrange(CRPS)
+
+```
+```{block accuracy4, type = 'written_answer'}
+As we can see from above, the forecast generated with the ETS model outperformed the other three, again, drastically. 
+```
+# Conclusion
+```{block conclusion, type = 'written_answer'}
+In conclusion, the ETS model is far and away the best choice for forecasting this data. The exponential smoothing method of the ETS model is the most sophisticated approach among the models considered. Given the observed upward trend and increasing magnitude of seasonality in our data, the latest data points in the time-series should be considered more heavily in model forecasting than the older data points. This is exactly what is done in ETS model forecasting. Therefore, the ETS model is the natural forecasting choice, given this data set. This is corroborated by the accuracy and performance metrics analyzed in this report. 
+```
