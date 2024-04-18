@@ -148,7 +148,7 @@ of the data.
 
 <p>
 </p>
-![](/Graphics/README_images/figure-markdown_strict/unnamed-chunk-11-1.png)
+<img src="/Graphics/README_images/figure-markdown_strict/unnamed-chunk-11-1.png">
 <p>
 </p>
 
@@ -173,7 +173,7 @@ Now we will plot the time-series that we will analyze: 2017 - 2022.
 
 <p>
 </p>
-![](/Graphics/README_images/figure-markdown_strict/unnamed-chunk-12-1.png)
+<img src="/Graphics/README_images/figure-markdown_strict/unnamed-chunk-12-1.png">
 <p>
 </p>
 
@@ -220,7 +220,7 @@ Now we will visualize the complete time series of the US natural gas exports mar
 
 <p>
 </p>
-![](/Graphics/README_images/figure-markdown_strict/unnamed-chunk-13-1.png)
+<img src="/Graphics/README_images/figure-markdown_strict/unnamed-chunk-13-1.png">
 <p>
 </p>
 
@@ -251,7 +251,7 @@ In order to generate the best possible forecasting models, the time-series neede
            
 <p>
 </p>
-![](/Graphics/README_images/figure-markdown_strict/unnamed-chunk-14-1.png)
+<img src="/Graphics/README_images/figure-markdown_strict/unnamed-chunk-14-1.png">
 <p>
 </p>
 
@@ -333,7 +333,7 @@ residuals.
 
 <p>
 </p>
-![](/Graphics/README_images/figure-markdown_strict/unnamed-chunk-17-1.png)
+<img src="/Graphics/README_images/figure-markdown_strict/unnamed-chunk-17-1.png">
 <p>
 </p>
 
@@ -346,7 +346,7 @@ residuals.
 
 <p>
 </p>
-![](/Graphics/README_images/figure-markdown_strict/unnamed-chunk-17-2.png)
+<img src="/Graphics/README_images/figure-markdown_strict/unnamed-chunk-17-2.png">
 <p>
 </p>
 
@@ -388,7 +388,7 @@ Now we will visually plot the generated forecast models against the actual value
 
 <p>
 </p>
-![](/Graphics/README_images/figure-markdown_strict/unnamed-chunk-18-1.png)
+<img src="/Graphics/README_images/figure-markdown_strict/unnamed-chunk-18-1.png">
 <p>
 </p>
 
@@ -404,7 +404,7 @@ Now we will visually plot the generated forecast models against the actual value
 
 <p>
 </p>
-![](/Graphics/README_images/figure-markdown_strict/unnamed-chunk-19-1.png)
+<img src="/Graphics/README_images/figure-markdown_strict/unnamed-chunk-19-1.png">
 <p>
 </p>
 
@@ -421,7 +421,7 @@ Now we will visually plot the generated forecast models against the actual value
 
 <p>
 </p>
-![](/Graphics/README_images/figure-markdown_strict/unnamed-chunk-20-1.png)
+<img src="/Graphics/README_images/figure-markdown_strict/unnamed-chunk-20-1.png">
 <p>
 </p>
     
@@ -438,7 +438,7 @@ Now we will visually plot the generated forecast models against the actual value
 
 <p>
 </p>
-![](/Graphics/README_images/figure-markdown_strict/unnamed-chunk-21-1.png)
+<img src="/Graphics/README_images/figure-markdown_strict/unnamed-chunk-21-1.png">
 <p>
 </p>
     
